@@ -45,7 +45,7 @@ HIDDEN_SIZE = 128                           # LSTM 隐藏层大小
 NUM_LAYERS = 2                              # LSTM 层数
 
 # --- 训练超参数 (Training Hyperparameters) ---
-NUM_EPOCHS = 3                             # 训练轮次 (epoch数)
+NUM_EPOCHS = 20                             # 训练轮次 (epoch数)
 BATCH_SIZE = 128                            # mini-batch大小
 LEARNING_RATE = 1e-3                        # 学习率
 
