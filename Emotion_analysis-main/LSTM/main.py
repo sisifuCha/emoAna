@@ -17,272 +17,9 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import precision_score, accuracy_score, f1_score, recall_score
 import config
 import os
-from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-from collections import defaultdict
-from mlxtend.preprocessing import TransactionEncoder
-from mlxtend.frequent_patterns import apriori, association_rules
-import networkx as nx
 import seaborn as sns
-from sklearn.manifold import TSNE
-
-
-plt.rcParams['font.sans-serif'] = ['SimSun']
-plt.rcParams['axes.unicode_minus'] = False
-
-
-# 词云可视化
-def generate_wordclouds(data, vocab, class_names):
-    plt.rcParams['font.sans-serif'] = ['SimSun']
-    plt.rcParams['axes.unicode_minus'] = False
-    """
-    为每个类别生成词云
-    :param data: 原始数据 (train/dev/test)
-    :param vocab: 词表 (id到词的映射)
-    :param class_names: 类别名称列表
-    """
-
-    # 反转vocab字典 (从id到词)
-    id_to_word = {v: k for k, v in vocab.items()}
-
-    # 为每个类别收集词频
-    class_word_freq = defaultdict(lambda: defaultdict(int))
-
-    for words_line, label in data:
-        for word_id in words_line:
-            word = id_to_word.get(word_id, "UNK")
-            class_word_freq[label][word] += 1
-
-    # 为每个类别生成词云
-    plt.figure(figsize=(15, 8))
-    for i, class_name in enumerate(class_names):
-        word_freq = class_word_freq[i]
-        if not word_freq:
-            continue
-
-        wordcloud = WordCloud(
-            width=800,
-            height=400,
-            background_color='white',
-            font_path='Emotion_analysis-main/LSTM/simsun.ttc'
-        ).generate_from_frequencies(word_freq)
-
-        plt.subplot(1, len(class_names), i + 1)
-        plt.imshow(wordcloud, interpolation='bilinear')
-        plt.title(f'"{class_name}"类别词云')
-        plt.axis('off')
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(config.RESULTS_DIR, 'wordclouds.png'), dpi=300)
-    plt.close()
-
-
-# 关联规则挖掘与网络图可视化
-def mine_and_visualize_associations(data, vocab, class_names, min_support=0.05):
-    # 设置中文字体
-    plt.rcParams['font.sans-serif'] = ['SimSun']
-    plt.rcParams['axes.unicode_minus'] = False
-    """
-    挖掘关联规则并可视化
-    :param data: 原始数据
-    :param vocab: 词表
-    :param class_names: 类别名称
-    :param min_support: 最小支持度
-    """
-    # 反转vocab字典
-    id_to_word = {v: k for k, v in vocab.items()}
-
-    # 准备事务数据
-    transactions = []
-    for words_line, label in data:
-        # 转换为词并添加类别标签
-        words = [id_to_word.get(word_id, "UNK") for word_id in words_line]
-        words.append(f"CLASS_{class_names[label]}")  # 添加类别标签
-        transactions.append(words)
-
-    # 转换为one-hot编码
-    te = TransactionEncoder()
-    te_ary = te.fit(transactions).transform(transactions)
-    df = pd.DataFrame(te_ary, columns=te.columns_)
-
-    # 挖掘频繁项集
-    frequent_itemsets = apriori(df, min_support=min_support, use_colnames=True)
-
-    # 挖掘关联规则
-    rules = association_rules(frequent_itemsets, metric="lift", min_threshold=1.2)
-
-    # 过滤出包含类别标签的规则
-    class_related_rules = rules[
-        rules['consequents'].apply(lambda x: any("CLASS_" in item for item in x)) |
-        rules['antecedents'].apply(lambda x: any("CLASS_" in item for item in x))
-        ]
-
-    # 可视化关联规则网络图
-    plt.figure(figsize=(12, 8))
-    G = nx.DiGraph()
-
-    # 添加节点和边
-    for _, row in class_related_rules.iterrows():
-        antecedents = list(row['antecedents'])
-        consequents = list(row['consequents'])
-        weight = row['lift']
-
-        # 添加节点
-        for node in antecedents + consequents:
-            G.add_node(node,
-                       size=20 if "CLASS_" in node else 10,
-                       color='red' if "CLASS_" in node else 'blue')
-
-        # 添加边
-        for ant in antecedents:
-            for cons in consequents:
-                G.add_edge(ant, cons, weight=weight)
-
-    # 绘制网络图
-    pos = nx.spring_layout(G, k=0.5)
-
-    # 节点颜色和大小
-    node_colors = [G.nodes[n]['color'] for n in G.nodes()]
-    node_sizes = [G.nodes[n]['size'] * 100 for n in G.nodes()]
-
-    # 绘制节点
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes)
-
-    # 绘制边
-    edges = G.edges()
-    weights = [G[u][v]['weight'] for u, v in edges]
-    nx.draw_networkx_edges(G, pos, edgelist=edges, width=weights)
-
-    # 绘制标签
-    labels = {n: n.replace("CLASS_", "") for n in G.nodes()}
-    nx.draw_networkx_labels(G, pos, labels, font_size=10)
-
-    plt.title("关联规则网络图 (边粗细表示lift值)")
-    plt.axis('off')
-    plt.savefig(os.path.join(config.RESULTS_DIR, 'association_network.png'), dpi=300)
-    plt.close()
-
-    return rules
-
-
-# 情感词分布可视化
-def visualize_word_distribution(data, vocab, class_names, sample_size=500):
-    # 设置中文字体
-    plt.rcParams['font.sans-serif'] = ['SimSun']
-    plt.rcParams['axes.unicode_minus'] = False
-    """
-    可视化词汇在不同类别中的分布
-    :param data: 原始数据
-    :param vocab: 词表
-    :param class_names: 类别名称
-    :param sample_size: 采样大小
-    """
-    # 反转vocab字典
-    id_to_word = {v: k for k, v in vocab.items()}
-
-    # 收集词向量和标签
-    words = []
-    labels = []
-    embeddings = []
-
-    # 确保我们加载了预训练词向量
-    if config.EMBEDDING_PRETRAINED is None:
-        print("无法可视化词分布 - 未加载预训练词向量")
-        return
-
-    # 采样数据
-    sampled_data = data[:sample_size]
-
-    for words_line, label in sampled_data:
-        for word_id in words_line[:10]:  # 只取每个样本的前10个词
-            word = id_to_word.get(word_id, "UNK")
-            if word == "UNK" or word == "PAD":
-                continue
-
-            words.append(word)
-            labels.append(class_names[label])
-            embeddings.append(config.EMBEDDING_PRETRAINED[word_id].cpu().numpy())
-
-    embeddings = np.array(embeddings)
-
-    # 使用t-SNE降维
-    tsne = TSNE(n_components=2, random_state=42)
-    embeddings_2d = tsne.fit_transform(embeddings)
-
-    # 创建DataFrame
-    df = pd.DataFrame({
-        'x': embeddings_2d[:, 0],
-        'y': embeddings_2d[:, 1],
-        'word': words,
-        'label': labels
-    })
-
-    # 绘制散点图
-    plt.figure(figsize=(12, 8))
-    sns.scatterplot(
-        data=df,
-        x='x', y='y',
-        hue='label',
-        palette='viridis',
-        alpha=0.7
-    )
-
-    # 添加一些重要词的标签
-    for _, row in df.sample(20).iterrows():
-        plt.text(row['x'], row['y'], row['word'],
-                 fontsize=8, alpha=0.8)
-
-    plt.title("词汇在情感类别中的分布 (t-SNE降维)")
-    plt.legend(title='情感类别')
-    plt.axis('off')
-    plt.savefig(os.path.join(config.RESULTS_DIR, 'word_distribution.png'), dpi=300)
-    plt.close()
-
-
-# 情感强度可视化
-def visualize_sentiment_intensity(model, data, vocab, class_names):
-    # 设置中文字体
-    plt.rcParams['font.sans-serif'] = ['SimSun']
-    plt.rcParams['axes.unicode_minus'] = False
-    """
-    可视化情感强度分布
-    :param model: 训练好的模型
-    :param data: 测试数据
-    :param vocab: 词表
-    :param class_names: 类别名称
-    """
-    model.eval()
-    all_probs = []
-    all_labels = []
-
-    with torch.no_grad():
-        for texts, labels in DataLoader(TextDataset(data), config.BATCH_SIZE):
-            outputs = model(texts)
-            probs = torch.softmax(outputs, dim=1)
-            all_probs.extend(probs.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-    # 创建DataFrame
-    df = pd.DataFrame(all_probs, columns=class_names)
-    df['True Label'] = [class_names[label] for label in all_labels]
-
-    # 绘制情感强度分布
-    plt.figure(figsize=(12, 6))
-    for i, class_name in enumerate(class_names):
-        plt.subplot(1, len(class_names), i + 1)
-        sns.histplot(
-            data=df[df['True Label'] == class_name],
-            x=class_name,
-            bins=20,
-            kde=True
-        )
-        plt.title(f'"{class_name}"样本的情感强度分布')
-        plt.xlabel('预测概率')
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(config.RESULTS_DIR, 'sentiment_intensity.png'), dpi=300)
-    plt.close()
-
+from utils import TextDataset
 
 def get_data():
     """
@@ -314,7 +51,7 @@ def load_dataset(path, pad_size_from_config, tokenizer, vocab):
     '''
     contents = []
     n=0
-    with open(path, 'r', encoding='gbk') as f:
+    with open(path, 'r', encoding='GBK') as f:
         # tqdm可以看进度条
         for line in tqdm(f):
             # 默认删除字符串line中的空格、’\n’、't’等。
@@ -357,22 +94,6 @@ def load_dataset(path, pad_size_from_config, tokenizer, vocab):
     return train,dev,test
 # get_data()
 
-class TextDataset(Dataset):
-    """
-    自定义的文本数据集类。
-    这个类接收预处理好的数据（(ID序列, 标签)元组的列表），
-    并将其转换为 PyTorch DataLoader 可以使用的格式。
-    """
-    def __init__(self, data):
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        self.x = torch.LongTensor([x[0] for x in data]).to(self.device)
-        self.y = torch.LongTensor([x[1] for x in data]).to(self.device)
-    def __getitem__(self,index):
-        self.text = self.x[index]
-        self.label = self.y[index]
-        return self.text, self.label
-    def __len__(self):
-        return len(self.x)
 
 # 以上是数据预处理的部分
 
@@ -496,8 +217,8 @@ def train( model, dataloaders):
         for batch_idx ,(inputs, labels) in enumerate(dataloaders['train']):
             current_batch_in_epoch = batch_idx + 1
             # print(inputs.shape)
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            inputs = torch.LongTensor(inputs).to(device)
+            labels = torch.LongTensor(labels).to(device)
             # 梯度清零，防止累加
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -575,8 +296,8 @@ def result_test(real, pred):
     plt.savefig(os.path.join(config.RESULTS_DIR,'reConfusionMatrix.tif'), dpi=400)
     plt.close()
 
-# 模型评估
-def dev_eval(model, data, loss_function,Result_test=False):
+
+def dev_eval(model, data, loss_function, Result_test=False):
     '''
     :param model: 模型
     :param data: 验证集集或者测试集的数据
@@ -587,53 +308,122 @@ def dev_eval(model, data, loss_function,Result_test=False):
     loss_total = 0
     predict_all = np.array([], dtype=int)
     labels_all = np.array([], dtype=int)
+
+    # 这一行很重要：自动获取模型所在的设备 (cpu or cuda)
+    device = next(model.parameters()).device
+
     with torch.no_grad():
+        # 这里的 texts 和 labels 是从 DataLoader 出来的 Python 列表
         for texts, labels in data:
-            outputs = model(texts)
-            loss = loss_function(outputs, labels)
+            # --- 【核心修改点】---
+            # 1. 将 Python 列表转换为 PyTorch Tensor
+            # 2. 将 Tensor 移动到模型所在的正确设备上
+            texts_tensor = torch.LongTensor(texts).to(device)
+            labels_tensor = torch.LongTensor(labels).to(device)
+
+            outputs = model(texts_tensor)
+            loss = loss_function(outputs, labels_tensor)
             loss_total += loss.item()
-            labels = labels.data.cpu().numpy()
+
+            # 将 tensor 转换回 numpy array 以便进行评估
+            # 注意：这里也要使用新的 labels_tensor
+            labels_np = labels_tensor.data.cpu().numpy()
             predic = torch.max(outputs.data, 1)[1].cpu().numpy()
-            labels_all = np.append(labels_all, labels)
+
+            labels_all = np.append(labels_all, labels_np)
             predict_all = np.append(predict_all, predic)
 
     acc = metrics.accuracy_score(labels_all, predict_all)
     if Result_test:
+        # 假设 result_test 是一个你已经定义好的函数
         result_test(labels_all, predict_all)
-    else:
-        pass
+
     return acc, loss_total / len(data)
 
+
 if __name__ == '__main__':
-    # 设置随机数种子，保证每次运行结果一致，不至于不能复现模型
+    # 确保输出目录存在
+    # (如果config.py中有定义，请确保路径正确)
+    if not os.path.exists(config.RESULTS_DIR):
+        os.makedirs(config.RESULTS_DIR)
+    if not os.path.exists(os.path.dirname(config.SAVE_PATH)):
+        os.makedirs(os.path.dirname(config.SAVE_PATH))
+
+    # 设置随机数种子，保证每次运行结果一致
     np.random.seed(config.RANDOM_SEED)
     torch.manual_seed(config.RANDOM_SEED)
     torch.cuda.manual_seed_all(config.RANDOM_SEED)
-    torch.backends.cudnn.deterministic = True  # 保证每次结果一样
+    torch.backends.cudnn.deterministic = True
+
+    # --- 从 config.py 读取运行模式 ---
+    print("=" * 60)
+    print(f"--> 当前运行模式 (来自 config.py): '{config.RUN_MODE}'")
+    print("=" * 60)
 
     start_time = time.time()
-    print("Loading data...")
+    print("--> 正在加载数据...")
     vocab, train_data, dev_data, test_data = get_data()
+
     # 读取类别名称
-    with open('data/class.txt', 'r', encoding='utf-8') as f:
-        class_names = [line.strip() for line in f]
+    class_names_path = 'data/class.txt'
+    if os.path.exists(class_names_path):
+        with open(class_names_path, 'r', encoding='utf-8') as f:
+            class_names = [line.strip() for line in f]
+    else:
+        print(f"警告: 类别文件 {class_names_path} 未找到，将使用默认标签。")
+        class_names = ['类别0', '类别1']  # 提供一个默认值
 
-    # 生成可视化
-    generate_wordclouds(train_data, vocab, class_names)
-    mine_and_visualize_associations(train_data, vocab, class_names)
-    visualize_word_distribution(train_data, vocab, class_names)
-    dataloaders = {
-        'train': DataLoader(TextDataset(train_data), config.BATCH_SIZE, shuffle=True),
-        'dev': DataLoader(TextDataset(dev_data), config.BATCH_SIZE, shuffle=True),
-        'test': DataLoader(TextDataset(test_data), config.BATCH_SIZE, shuffle=True)
-    }
     time_dif = get_time_dif(start_time)
-    print("Time usage:", time_dif)
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    model = Model().to(device)
-    init_network(model)
-    train(model, dataloaders)
+    print(f"--> 数据加载完成，耗时: {time_dif}")
 
-    # 训练后可视化
-    model.load_state_dict(torch.load(config.SAVE_PATH))
-    visualize_sentiment_intensity(model, test_data, vocab, class_names)
+    # --- 根据 config.RUN_MODE 的值选择执行任务 ---
+
+    # 如果模式是 'train' 或 'all'，则执行训练流程
+    if config.RUN_MODE in ['train', 'all']:
+        print("          开始进入模型训练与评估流程")
+        print("=" * 50)
+
+        dataloaders = {
+            'train': DataLoader(TextDataset(train_data), config.BATCH_SIZE, shuffle=True),
+            'dev': DataLoader(TextDataset(dev_data), config.BATCH_SIZE, shuffle=True),
+            'test': DataLoader(TextDataset(test_data), config.BATCH_SIZE, shuffle=True)
+        }
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+        model = Model().to(device)
+        init_network(model)
+        train(model, dataloaders)
+
+    # 如果模式是 'visualize' 或 'all'，则执行可视化流程
+    if config.RUN_MODE in ['visualize', 'all']:
+        print("          开始进入数据可视化流程")
+        print("=" * 50)
+
+        # 动态导入可视化模块，确保它只在需要时被加载
+        try:
+            import visualize
+        except ImportError:
+            print("错误: 无法导入 visualize.py。请确保该文件存在于同一目录下。")
+            exit()  # 如果找不到可视化文件，直接退出
+
+        print("--> 正在生成词云图...")
+        visualize.generate_wordclouds(train_data, vocab, class_names)
+
+        # 注意：以下可视化非常耗时，可以根据需要注释掉
+        print("--> 正在进行关联规则挖掘与可视化(这可能需要很长时间)...")
+        visualize.mine_and_visualize_associations(train_data, vocab, class_names)
+
+        print("--> 正在进行词分布可视化(t - SNE)...")
+        visualize.visualize_word_distribution(train_data, vocab, class_names)
+
+        # 情感强度可视化需要已训练好的模型
+        if os.path.exists(config.SAVE_PATH):
+            print("--> 正在进行情感强度可视化...")
+            device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+            model = Model().to(device)
+            model.load_state_dict(torch.load(config.SAVE_PATH))
+            visualize.visualize_sentiment_intensity(model, test_data, vocab, class_names)
+        else:
+             print("--> 跳过情感强度可视化，因为找不到已训练的模型。")
+
+    print("所有任务执行完毕。")

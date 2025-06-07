@@ -38,6 +38,8 @@ except KeyError:
     EMBEDDING_PRETRAINED = None
     EMBED_DIM = 300
 
+
+RUN_MODE = 'visualize'
 # --- 模型超参数 (Model Hyperparameters) ---
 DROPOUT = 0.5                               # 随机丢弃率
 NUM_CLASSES = 2                             # 类别数 (例如：正面/负面)
@@ -45,7 +47,7 @@ HIDDEN_SIZE = 128                           # LSTM 隐藏层大小
 NUM_LAYERS = 2                              # LSTM 层数
 
 # --- 训练超参数 (Training Hyperparameters) ---
-NUM_EPOCHS = 20                             # 训练轮次 (epoch数)
+NUM_EPOCHS = 3                              # 训练轮次 (epoch数)
 BATCH_SIZE = 128                            # mini-batch大小
 LEARNING_RATE = 1e-3                        # 学习率
 
